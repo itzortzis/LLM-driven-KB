@@ -6,6 +6,13 @@ from transformers import TrainerCallback
 
 import evaluate
 
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
+import torch
+print(torch.cuda.get_device_name(0))
+
+
 
 class SampleGenerationCallback(TrainerCallback):
     def on_evaluate(self, args, state, control, **kwargs):
