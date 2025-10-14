@@ -1,20 +1,24 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
+from datasets import load_dataset
 
 model = AutoModelForCausalLM.from_pretrained("tinyllama-finetuned", device_map="auto")
 tokenizer = AutoTokenizer.from_pretrained("TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T")
 
 
+
+# ds = load_dataset("GEM/web_nlg", "en", split="test[:5]")
+# dataset = ds
 # prompt = """### Instruction:
 # From the given input produce some 5 tags
 # ### Input:
 # A short article about ingredients, restaurants, and desserts in the context of food.
 # ### Response:"""
 
-prompt = """### Instruction:
-From the given input, extract key information and represent it as RDF triples (subject, predicate, object).
+prompt = f"""### Instruction:
+From the given input produce a reasonable RDF triple
 ### Input:
-Ioannis Tzortzis is working as developer in Athens. he lives there as well.
+Distinguished Service Medal (US Navy) recipient Alan Shepard was born in New Hampshire but died in California.
 ### Response:"""
 inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
 outputs = model.generate(

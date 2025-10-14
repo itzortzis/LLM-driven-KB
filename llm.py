@@ -6,8 +6,8 @@ from datasets import load_dataset
 model_name = "TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
 # dataset = load_dataset("json", data_files="dataset.json")
 
-ds = load_dataset("GEM/web_nlg", "en")
-dataset = ds['challenge_train_sample']
+ds = load_dataset("GEM/web_nlg", "en", split="train[:5000]")
+dataset = ds
 
 
 tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -44,11 +44,12 @@ args = TrainingArguments(
     per_device_train_batch_size=4,
     gradient_accumulation_steps=4,
     learning_rate=2e-4,
-    num_train_epochs=20,
+    num_train_epochs=3,
     fp16=True,
     save_steps=500,
-    logging_steps=100,
-    optim="paged_adamw_8bit"
+    logging_steps=10,
+    optim="paged_adamw_8bit",
+    report_to="wandb"
 )
 
 trainer = Trainer(model=model, args=args, train_dataset=tokenized)
