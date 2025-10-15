@@ -1,30 +1,38 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments, Trainer
 from peft import LoraConfig, get_peft_model
+from transformers import TrainerCallback
 from datasets import load_dataset
 import numpy as np
-from transformers import TrainerCallback
-
+import argparse
 import evaluate
-
 import os
+
+
+parser = argparse.ArgumentParser(description="Add integers from command line.")
+
+parser.add_argument("c", type=int, help="Chunk size")
+parser.add_argument("i", type=int, help="Chunk index")
+parser.add_argument("e", type=int, help="Epochs")
+
+args = parser.parse_args()
+
+
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-import torch
-print(torch.cuda.get_device_name(0))
+# import torch
+# print(torch.cuda.get_device_name(0))
 
-
-
-class SampleGenerationCallback(TrainerCallback):
-    def on_evaluate(self, args, state, control, **kwargs):
-        sample = valid_set[0]
-        prompt = f"### Instruction:\nFrom the given input produce a reasonable RDF triple\n### Input:\n{sample['target']}\n### Response:\n"
-        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-        output = model.generate(**inputs, max_new_tokens=50)
-        print("\n\n--- Sample Generation ---")
-        print("Input:", sample["target"])
-        print("Generated:", tokenizer.decode(output[0], skip_special_tokens=True))
-        print("Reference:", sample["input"])
-        print("--------------------------\n")
+# class SampleGenerationCallback(TrainerCallback):
+#     def on_evaluate(self, args, state, control, **kwargs):
+#         sample = valid_set[0]
+#         prompt = f"### Instruction:\nFrom the given input produce a reasonable RDF triple\n### Input:\n{sample['target']}\n### Response:\n"
+#         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+#         output = model.generate(**inputs, max_new_tokens=50)
+#         print("\n\n--- Sample Generation ---")
+#         print("Input:", sample["target"])
+#         print("Generated:", tokenizer.decode(output[0], skip_special_tokens=True))
+#         print("Reference:", sample["input"])
+#         print("--------------------------\n")
 
 # Load metrics
 bleu = evaluate.load("bleu")
@@ -32,11 +40,24 @@ rouge = evaluate.load("rouge")
 
 
 model_name = "TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
-# dataset = load_dataset("json", data_files="dataset.json")
+
 
 dataset = load_dataset("GEM/web_nlg", "en")
-train_set = dataset["train"].select(range(1000))
-valid_set = dataset["validation"].select(range(100))
+# print(dataset)
+# train_set = dataset["train"].select(range(10))
+val_chunk = int(0.2 * args.c / 0.8)
+# print(val_chunk)
+valid_set = dataset["validation"].select(range(val_chunk))
+
+
+
+train_set_all = dataset["train"].shuffle(seed=42)
+
+start = args.i * args.c
+end = start + args.c
+# print(start, end)
+train_set = train_set_all.select(range(start, end))
+
 
 
 tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -58,26 +79,6 @@ lora_config = LoraConfig(
 )
 model = get_peft_model(model, lora_config)
 
-
-def compute_metrics_old(eval_pred):
-    preds, labels = eval_pred
-
-    # 🔹 preds are logits → take argmax to get token IDs
-    preds = np.argmax(preds, axis=-1)
-
-    # 🔹 Replace ignored index (-100) in labels so decoding works
-    preds = np.where(preds != -100, preds, tokenizer.pad_token_id)
-    labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
-
-    # 🔹 Decode tokens to strings
-    decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
-    decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
-
-    # 🔹 Simple metric: exact string match
-    matches = [int(p.strip() == l.strip()) for p, l in zip(decoded_preds, decoded_labels)]
-    exact_match = np.mean(matches)
-
-    return {"exact_match": exact_match}
 
 
 def compute_metrics(eval_pred):
@@ -112,9 +113,10 @@ def compute_metrics(eval_pred):
 
 
 def tokenize_fn(example):
+    # print(example)
     instruction = "From the given input produce a reasonable RDF triple"
     text = f"### Instruction:\n{instruction}\n### Input:\n{example['target']}\n### Response:\n{example['input']}"
-    tokens = tokenizer(text, truncation=True, padding="max_length", max_length=512)
+    tokens = tokenizer(text, truncation=True, padding="max_length", max_length=128)
     tokens["labels"] = tokens["input_ids"].copy()
     return tokens
 
@@ -123,21 +125,25 @@ valid_tokenized = valid_set.map(tokenize_fn)
 print(train_tokenized)
 print(valid_tokenized)
 
+trained_model_name = "tinyllama-finetuned_" + str(args.c) + "_" + str(args.i)
+run_name = "LLM-driven-KB-" + str(args.c) + "_" + str(args.i)
+
 args = TrainingArguments(
     output_dir="./tinyllama-lora",
     per_device_train_batch_size=4,
-    gradient_accumulation_steps=4,
+    gradient_accumulation_steps=1,
     learning_rate=2e-4,
-    num_train_epochs=3,
+    num_train_epochs=args.e,
     fp16=True,
     save_steps=500,
     logging_steps=10,
     eval_strategy="epoch",
     save_strategy="epoch",
     optim="paged_adamw_8bit",
-    report_to="wandb"
+    report_to="wandb",
+    run_name=run_name
 )
 
-trainer = Trainer(model=model, args=args, train_dataset=train_tokenized, eval_dataset=valid_tokenized, compute_metrics=compute_metrics, callbacks=[SampleGenerationCallback()])
+trainer = Trainer(model=model, args=args, train_dataset=train_tokenized, eval_dataset=valid_tokenized, compute_metrics=compute_metrics)
 trainer.train()
-model.save_pretrained("tinyllama-finetuned")
+model.save_pretrained(trained_model_name)
