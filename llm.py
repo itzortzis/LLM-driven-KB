@@ -6,7 +6,8 @@ import numpy as np
 import argparse
 import evaluate
 import os
-
+import torch
+import gc
 
 parser = argparse.ArgumentParser(description="Add integers from command line.")
 
@@ -19,24 +20,23 @@ args = parser.parse_args()
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-# import torch
-# print(torch.cuda.get_device_name(0))
-
-# class SampleGenerationCallback(TrainerCallback):
-#     def on_evaluate(self, args, state, control, **kwargs):
-#         sample = valid_set[0]
-#         prompt = f"### Instruction:\nFrom the given input produce a reasonable RDF triple\n### Input:\n{sample['target']}\n### Response:\n"
-#         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-#         output = model.generate(**inputs, max_new_tokens=50)
-#         print("\n\n--- Sample Generation ---")
-#         print("Input:", sample["target"])
-#         print("Generated:", tokenizer.decode(output[0], skip_special_tokens=True))
-#         print("Reference:", sample["input"])
-#         print("--------------------------\n")
-
 # Load metrics
 bleu = evaluate.load("bleu")
 rouge = evaluate.load("rouge")
+
+
+class VRAMCleanupCallback(TrainerCallback):
+    def on_evaluate(self, args, state, control, **kwargs):
+        print("\n--- Running VRAM cleanup before evaluation ---")
+        
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        
+        gc.collect()
+
+        
+        print("-------------------------------------------\n")
 
 
 model_name = "TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
@@ -46,7 +46,7 @@ dataset = load_dataset("GEM/web_nlg", "en")
 # print(dataset)
 # train_set = dataset["train"].select(range(10))
 val_chunk = int(0.2 * args.c / 0.8)
-# print(val_chunk)
+print(val_chunk)
 valid_set = dataset["validation"].select(range(val_chunk))
 
 
@@ -92,8 +92,9 @@ def compute_metrics(eval_pred):
     labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
 
     # Decode text
-    decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
-    decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
+    with torch.no_grad():
+        decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
+        decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
 
     # Post-process: strip whitespace
     decoded_preds = [p.strip() for p in decoded_preds]
@@ -130,8 +131,9 @@ run_name = "LLM-driven-KB-" + str(args.c) + "_" + str(args.i)
 
 args = TrainingArguments(
     output_dir="./tinyllama-lora",
-    per_device_train_batch_size=4,
-    gradient_accumulation_steps=1,
+    per_device_train_batch_size=2,
+    per_device_eval_batch_size=2,
+    gradient_accumulation_steps=2,
     learning_rate=2e-4,
     num_train_epochs=args.e,
     fp16=True,
@@ -144,6 +146,6 @@ args = TrainingArguments(
     run_name=run_name
 )
 
-trainer = Trainer(model=model, args=args, train_dataset=train_tokenized, eval_dataset=valid_tokenized, compute_metrics=compute_metrics)
+trainer = Trainer(model=model, args=args, train_dataset=train_tokenized, eval_dataset=valid_tokenized, compute_metrics=compute_metrics, callbacks=[VRAMCleanupCallback()])
 trainer.train()
 model.save_pretrained(trained_model_name)
