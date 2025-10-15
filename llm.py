@@ -122,30 +122,27 @@ def tokenize_fn(example):
     return tokens
 
 train_tokenized = train_set.map(tokenize_fn)
-valid_tokenized = valid_set.map(tokenize_fn)
+# valid_tokenized = valid_set.map(tokenize_fn)
 print(train_tokenized)
-print(valid_tokenized)
+# print(valid_tokenized)
 
 trained_model_name = "tinyllama-finetuned_" + str(args.c) + "_" + str(args.i)
-run_name = "LLM-driven-KB-" + str(args.c) + "_" + str(args.i)
+run_name = "Melina-LLM-driven-KB-" + str(args.c) + "_" + str(args.i)
 
 args = TrainingArguments(
-    output_dir="./tinyllama-lora",
+    output_dir="./tinyllama-lora_" + str(args.c) + "_" + str(args.i),
     per_device_train_batch_size=2,
-    per_device_eval_batch_size=2,
     gradient_accumulation_steps=2,
     learning_rate=2e-4,
     num_train_epochs=args.e,
     fp16=True,
     save_steps=500,
     logging_steps=10,
-    eval_strategy="epoch",
-    save_strategy="epoch",
     optim="paged_adamw_8bit",
     report_to="wandb",
     run_name=run_name
 )
 
-trainer = Trainer(model=model, args=args, train_dataset=train_tokenized, eval_dataset=valid_tokenized, compute_metrics=compute_metrics, callbacks=[VRAMCleanupCallback()])
+trainer = Trainer(model=model, args=args, train_dataset=train_tokenized, compute_metrics=compute_metrics, callbacks=[VRAMCleanupCallback()])
 trainer.train()
 model.save_pretrained(trained_model_name)
